@@ -76,6 +76,7 @@ async function main() {
   }
   const counts = { examined: 0, updated: 0, review: 0, unchanged: 0 };
   const preview = [];
+  const reviewDetails = [];
   const decisions = { price: { baseline: 0, toShopify: 0, toAirtable: 0, review: 0 }, cost: { baseline: 0, toShopify: 0, toAirtable: 0, review: 0 } };
   const proposedFields = { price: 0, cost: 0, lastPrice: 0, lastCost: 0, review: 0 };
   for (const record of records) {
@@ -97,7 +98,7 @@ async function main() {
         decisions[entry.label.toLowerCase()][decision.action]++;
         if (decision.action === "review") {
           problems.push(`${entry.label}: ${decision.reason}`);
-          if (CFG.dryRun) logger("info", "Price/cost needs review", { sku: variant.sku, field: entry.label, airtable: f[entry.field] ?? null, shopify: entry.shopify ?? null, lastSynced: f[entry.mirror] ?? null, reason: decision.reason });
+          if (CFG.dryRun) reviewDetails.push({ sku: variant.sku, field: entry.label, airtable: f[entry.field] ?? null, shopify: entry.shopify ?? null, lastSynced: f[entry.mirror] ?? null, reason: decision.reason });
           continue;
         }
         if (decision.action === "baseline") {
@@ -114,7 +115,7 @@ async function main() {
       } catch (error) {
         decisions[entry.label.toLowerCase()].review++;
         problems.push(`${entry.label}: ${error.message}`);
-        if (CFG.dryRun) logger("info", "Price/cost needs review", { sku: variant.sku, field: entry.label, airtable: f[entry.field] ?? null, shopify: entry.shopify ?? null, lastSynced: f[entry.mirror] ?? null, reason: error.message });
+        if (CFG.dryRun) reviewDetails.push({ sku: variant.sku, field: entry.label, airtable: f[entry.field] ?? null, shopify: entry.shopify ?? null, lastSynced: f[entry.mirror] ?? null, reason: error.message });
       }
     }
     const review = problems.join("; ");
@@ -130,6 +131,7 @@ async function main() {
     if (problems.length) counts.review++;
   }
   console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, updatedMeaning: CFG.dryRun ? "proposed" : "written", ...counts, decisions, proposedFields, preview }));
+  if (CFG.dryRun) console.log(JSON.stringify({ reviewDetails }));
 }
 
 main().catch(error => { logger("error", "price/cost sync failed", error.message); process.exit(1); });
