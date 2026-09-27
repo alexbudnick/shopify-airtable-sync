@@ -1,6 +1,19 @@
 import { CFG, airtableRequest, shopifyGraphQL, updateAirtableRecord, logger } from "./lib.js";
 import { decideMoneySync, money } from "./price_cost_decision.js";
 
+async function shopifyGraphQLWithRetry(query, variables = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await shopifyGraphQL(query, variables);
+    } catch (error) {
+      if (attempt >= 5 || !/"code":"THROTTLED"|Shopify GraphQL failed 429/.test(String(error.message))) throw error;
+      const delayMs = 1000 * 2 ** attempt;
+      logger("warn", "Shopify throttled price/cost sync; retrying", { attempt: attempt + 1, delayMs });
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 const query = `query PriceCostProducts($cursor: String) {
   products(first: 25, after: $cursor) {
     pageInfo { hasNextPage endCursor }
@@ -31,7 +44,7 @@ async function shopifyVariants() {
   const variants = [];
   let cursor = null;
   do {
-    const data = await shopifyGraphQL(query, { cursor });
+    const data = await shopifyGraphQLWithRetry(query, { cursor });
     if (!data?.products) throw new Error("Shopify product query returned no products connection");
     for (const product of data.products.nodes) {
       if (product.variants.pageInfo.hasNextPage) {
@@ -48,7 +61,7 @@ async function shopifyVariants() {
 function canonicalId(value) { return String(value || "").split("/").at(-1); }
 
 async function updateShopifyPrice(variant, amount) {
-  const data = await shopifyGraphQL(`mutation Price($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  const data = await shopifyGraphQLWithRetry(`mutation Price($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
     productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
   }`, { productId: variant.productId, variants: [{ id: variant.id, price: amount }] });
   const errors = data?.productVariantsBulkUpdate?.userErrors;
@@ -56,7 +69,7 @@ async function updateShopifyPrice(variant, amount) {
 }
 
 async function updateShopifyCost(variant, amount) {
-  const data = await shopifyGraphQL(`mutation Cost($id: ID!, $input: InventoryItemInput!) {
+  const data = await shopifyGraphQLWithRetry(`mutation Cost($id: ID!, $input: InventoryItemInput!) {
     inventoryItemUpdate(id: $id, input: $input) { userErrors { field message } }
   }`, { id: variant.inventoryItem.id, input: { cost: amount } });
   const errors = data?.inventoryItemUpdate?.userErrors;
