@@ -77,6 +77,7 @@ async function main() {
   const counts = { examined: 0, updated: 0, review: 0, unchanged: 0 };
   const preview = [];
   const reviewDetails = [];
+  const transfers = [];
   const decisions = { price: { baseline: 0, toShopify: 0, toAirtable: 0, review: 0 }, cost: { baseline: 0, toShopify: 0, toAirtable: 0, review: 0 } };
   const proposedFields = { price: 0, cost: 0, lastPrice: 0, lastCost: 0, review: 0 };
   for (const record of records) {
@@ -104,11 +105,13 @@ async function main() {
         if (decision.action === "baseline") {
           if (decision.value !== null && money(f[entry.mirror]) !== decision.value) fields[entry.mirror] = Number(decision.value);
         } else if (decision.action === "toShopify") {
+          if (CFG.dryRun) transfers.push({ sku: variant.sku, field: entry.label, target: "Shopify", value: decision.value });
           if (CFG.dryRun) {
             if (preview.length < 20) preview.push({ sku: variant.sku, target: "Shopify", field: entry.label, value: decision.value });
           } else await entry.push(variant, decision.value);
           if (!CFG.dryRun) fields[entry.mirror] = Number(decision.value);
         } else {
+          if (CFG.dryRun) transfers.push({ sku: variant.sku, field: entry.label, target: "Airtable", value: decision.value });
           fields[entry.field] = Number(decision.value);
           fields[entry.mirror] = Number(decision.value);
         }
@@ -130,7 +133,7 @@ async function main() {
     else counts.unchanged++;
     if (problems.length) counts.review++;
   }
-  console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, updatedMeaning: CFG.dryRun ? "proposed" : "written", ...counts, decisions, proposedFields, preview }));
+  console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, updatedMeaning: CFG.dryRun ? "proposed" : "written", ...counts, decisions, proposedFields, transfers, preview }));
   if (CFG.dryRun) console.log(JSON.stringify({ reviewDetails }));
 }
 
