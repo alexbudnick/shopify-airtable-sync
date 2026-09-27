@@ -76,6 +76,8 @@ async function main() {
   }
   const counts = { examined: 0, updated: 0, review: 0, unchanged: 0 };
   const preview = [];
+  const decisions = { price: { baseline: 0, toShopify: 0, toAirtable: 0, review: 0 }, cost: { baseline: 0, toShopify: 0, toAirtable: 0, review: 0 } };
+  const proposedFields = { price: 0, cost: 0, lastPrice: 0, lastCost: 0, review: 0 };
   for (const record of records) {
     const f = record.fields;
     const id = canonicalId(f[CFG.airtable.shopifyVariantIdField]);
@@ -92,7 +94,12 @@ async function main() {
     ]) {
       try {
         const decision = decideMoneySync(f[entry.field], entry.shopify, f[entry.mirror]);
-        if (decision.action === "review") { problems.push(`${entry.label}: ${decision.reason}`); continue; }
+        decisions[entry.label.toLowerCase()][decision.action]++;
+        if (decision.action === "review") {
+          problems.push(`${entry.label}: ${decision.reason}`);
+          if (CFG.dryRun) logger("info", "Price/cost needs review", { sku: variant.sku, field: entry.label, airtable: f[entry.field] ?? null, shopify: entry.shopify ?? null, lastSynced: f[entry.mirror] ?? null, reason: decision.reason });
+          continue;
+        }
         if (decision.action === "baseline") {
           if (decision.value !== null && money(f[entry.mirror]) !== decision.value) fields[entry.mirror] = Number(decision.value);
         } else if (decision.action === "toShopify") {
@@ -104,11 +111,16 @@ async function main() {
           fields[entry.field] = Number(decision.value);
           fields[entry.mirror] = Number(decision.value);
         }
-      } catch (error) { problems.push(`${entry.label}: ${error.message}`); }
+      } catch (error) {
+        decisions[entry.label.toLowerCase()].review++;
+        problems.push(`${entry.label}: ${error.message}`);
+        if (CFG.dryRun) logger("info", "Price/cost needs review", { sku: variant.sku, field: entry.label, airtable: f[entry.field] ?? null, shopify: entry.shopify ?? null, lastSynced: f[entry.mirror] ?? null, reason: error.message });
+      }
     }
     const review = problems.join("; ");
     if (review !== String(f[CFG.airtable.priceCostReviewField] || "")) fields[CFG.airtable.priceCostReviewField] = review || null;
     if (Object.keys(fields).length) {
+      for (const [label, field] of Object.entries({ price: CFG.airtable.priceField, cost: CFG.airtable.costField, lastPrice: CFG.airtable.lastPriceField, lastCost: CFG.airtable.lastCostField, review: CFG.airtable.priceCostReviewField })) if (Object.hasOwn(fields, field)) proposedFields[label]++;
       if (CFG.dryRun) {
         if (preview.length < 20) preview.push({ sku: variant.sku, target: "Airtable", fields });
       } else await updateAirtableRecord(record.id, fields);
@@ -117,7 +129,7 @@ async function main() {
     else counts.unchanged++;
     if (problems.length) counts.review++;
   }
-  console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, updatedMeaning: CFG.dryRun ? "proposed" : "written", ...counts, preview }));
+  console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, updatedMeaning: CFG.dryRun ? "proposed" : "written", ...counts, decisions, proposedFields, preview }));
 }
 
 main().catch(error => { logger("error", "price/cost sync failed", error.message); process.exit(1); });
