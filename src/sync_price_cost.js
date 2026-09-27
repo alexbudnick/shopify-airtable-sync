@@ -96,8 +96,9 @@ async function main() {
         if (decision.action === "baseline") {
           if (decision.value !== null && money(f[entry.mirror]) !== decision.value) fields[entry.mirror] = Number(decision.value);
         } else if (decision.action === "toShopify") {
-          if (CFG.dryRun && preview.length < 20) preview.push({ sku: variant.sku, target: "Shopify", field: entry.label, value: decision.value });
-          else await entry.push(variant, decision.value);
+          if (CFG.dryRun) {
+            if (preview.length < 20) preview.push({ sku: variant.sku, target: "Shopify", field: entry.label, value: decision.value });
+          } else await entry.push(variant, decision.value);
           if (!CFG.dryRun) fields[entry.mirror] = Number(decision.value);
         } else {
           fields[entry.field] = Number(decision.value);
