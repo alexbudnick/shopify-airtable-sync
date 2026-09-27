@@ -75,6 +75,7 @@ async function main() {
     airtableIdCounts.set(id, (airtableIdCounts.get(id) || 0) + 1);
   }
   const counts = { examined: 0, updated: 0, review: 0, unchanged: 0 };
+  const preview = [];
   for (const record of records) {
     const f = record.fields;
     const id = canonicalId(f[CFG.airtable.shopifyVariantIdField]);
@@ -95,7 +96,7 @@ async function main() {
         if (decision.action === "baseline") {
           if (decision.value !== null && money(f[entry.mirror]) !== decision.value) fields[entry.mirror] = Number(decision.value);
         } else if (decision.action === "toShopify") {
-          if (CFG.dryRun) logger("info", "Would push money to Shopify", { sku: variant.sku, field: entry.label, value: decision.value });
+          if (CFG.dryRun && preview.length < 20) preview.push({ sku: variant.sku, target: "Shopify", field: entry.label, value: decision.value });
           else await entry.push(variant, decision.value);
           if (!CFG.dryRun) fields[entry.mirror] = Number(decision.value);
         } else {
@@ -106,11 +107,16 @@ async function main() {
     }
     const review = problems.join("; ");
     if (review !== String(f[CFG.airtable.priceCostReviewField] || "")) fields[CFG.airtable.priceCostReviewField] = review || null;
-    if (Object.keys(fields).length) { await updateAirtableRecord(record.id, fields); counts.updated++; }
+    if (Object.keys(fields).length) {
+      if (CFG.dryRun) {
+        if (preview.length < 20) preview.push({ sku: variant.sku, target: "Airtable", fields });
+      } else await updateAirtableRecord(record.id, fields);
+      counts.updated++;
+    }
     else counts.unchanged++;
     if (problems.length) counts.review++;
   }
-  console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, ...counts }));
+  console.log(JSON.stringify({ ok: true, dryRun: CFG.dryRun, updatedMeaning: CFG.dryRun ? "proposed" : "written", ...counts, preview }));
 }
 
 main().catch(error => { logger("error", "price/cost sync failed", error.message); process.exit(1); });
