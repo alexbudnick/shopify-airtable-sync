@@ -22,3 +22,9 @@ test("blank and invalid costs cannot silently erase stock accounting", () => {
   assert.deepEqual(decideMoneySync(0, 10, 10), { action: "toShopify", value: "0.00" });
   assert.throws(() => decideMoneySync(-1, 10, 10));
 });
+
+test("ordinary cent amounts survive floating point representation", () => {
+  assert.deepEqual(decideMoneySync(273.78, 273.78, null), { action: "baseline", value: "273.78" });
+  assert.deepEqual(decideMoneySync(1214.1, 1214.1, null), { action: "baseline", value: "1214.10" });
+  assert.throws(() => decideMoneySync(1.001, 1, null));
+});

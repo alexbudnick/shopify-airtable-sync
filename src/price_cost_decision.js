@@ -1,7 +1,8 @@
 export function money(value) {
   if (value === null || value === undefined || value === "") return null;
   const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0 || Math.round(amount * 100) !== amount * 100) {
+  if (!Number.isFinite(amount) || amount < 0 ||
+      Math.abs(Math.round(amount * 100) - amount * 100) > 1e-7) {
     throw new Error(`Invalid money value: ${value}`);
   }
   return amount.toFixed(2);
