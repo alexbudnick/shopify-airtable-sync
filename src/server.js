@@ -8,6 +8,10 @@ import {
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
+if (process.env.RAILWAY_ENVIRONMENT_NAME === "production" && CFG.dryRun) {
+  throw new Error("Refusing to start production Shopify→Airtable webhook service with DRY_RUN=true");
+}
+
 async function upsertListingByProduct(productPayload) {
   const productId = String(productPayload.id);
   const productGid = `gid://shopify/Product/${productId}`;
@@ -96,31 +100,40 @@ async function updateQtyFromInventoryWebhook(payload) {
   logger("info", "Updated Airtable qty from Shopify inventory webhook", { variantId, sku, qty, inventoryItemIdRaw });
 }
 
-async function markSoldByLineItems(orderPayload) {
+async function reconcileOrderLineItems(orderPayload) {
   const lineItems = Array.isArray(orderPayload.line_items) ? orderPayload.line_items : [];
   for (const item of lineItems) {
     const sku = item?.sku;
-    if (!sku) {
-      logger("warn", "Order line missing SKU; skipping", { orderId: orderPayload.id });
+    const productId = item?.product_id;
+    if (!sku || !productId) {
+      logger("warn", "Order line missing SKU or product_id; skipping", { orderId: orderPayload.id, sku, productId });
       continue;
     }
     const record = await findAirtableRecordBySku(sku);
     if (!record) {
-      logger("warn", "No Airtable record found for sold SKU", { sku, orderId: orderPayload.id });
+      logger("warn", "No Airtable record found for order SKU", { sku, orderId: orderPayload.id });
       continue;
     }
+    const inventoryData = await getVariantInventoryData(`gid://shopify/Product/${productId}`, sku);
+    if (!inventoryData) {
+      logger("warn", "Could not resolve exact Shopify inventory after order", { sku, orderId: orderPayload.id, productId });
+      continue;
+    }
+    const qty = Number(inventoryData.inventoryQuantity ?? 0);
     const fields = {
-      [CFG.airtable.statusField]: CFG.values.sold,
-      [CFG.airtable.qtyField]: 0,
-      [CFG.airtable.soldChannelField]: CFG.values.soldChannelShopify,
-      [CFG.airtable.soldDateField]: nowIso(),
-      [CFG.airtable.listedField]: false,
-      [CFG.airtable.lastSyncSourceField]: "Shopify",
+      [CFG.airtable.qtyField]: qty,
+      [CFG.airtable.lastSyncSourceField]: "Shopify Order",
       [CFG.airtable.lastSyncAtField]: nowIso(),
     };
-    if (CFG.values.clearLocationOnSale) fields[CFG.airtable.locationField] = null;
+    if (qty === 0) {
+      fields[CFG.airtable.statusField] = CFG.values.sold;
+      fields[CFG.airtable.soldChannelField] = CFG.values.soldChannelShopify;
+      fields[CFG.airtable.soldDateField] = orderPayload.created_at || nowIso();
+      fields[CFG.airtable.listedField] = false;
+      if (CFG.values.clearLocationOnSale) fields[CFG.airtable.locationField] = null;
+    }
     await updateAirtableRecord(record.id, fields);
-    logger("info", "Marked Airtable item sold from Shopify order", { sku, orderId: orderPayload.id });
+    logger("info", "Reconciled Airtable from Shopify order", { sku, orderId: orderPayload.id, qty });
   }
 }
 
@@ -159,7 +172,7 @@ app.post("/webhooks/shopify/orders-create", express.raw({ type: "*/*" }), async 
     const hmac = req.get("X-Shopify-Hmac-Sha256");
     const rawBody = req.body.toString("utf8");
     if (!verifyShopifyWebhook(rawBody, hmac)) return res.status(401).send("Invalid HMAC");
-    await markSoldByLineItems(JSON.parse(rawBody));
+    await reconcileOrderLineItems(JSON.parse(rawBody));
     return res.status(200).send("ok");
   } catch (err) {
     logger("error", "orders-create webhook failed", err.message);
